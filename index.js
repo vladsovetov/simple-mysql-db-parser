@@ -28,7 +28,21 @@ var mysqlToObjParser = (function() {
         commands: {
             createTable: {
                 name: 'CREATE_TABLE',
-                keywords: ['CREATE', 'TABLE']
+                keywords: ['CREATE', 'TABLE'],
+                tableOptions: {
+                    engine: {
+                        regex: /ENGINE\s*(=)?\s*(\w+)/im,
+                        valIndex: 2
+                    },
+                    characterSet: {
+                        regex: /(DEFAULT)?\s+CHARACTER SET\s*(=)?\s*(\w+)/im,
+                        valIndex: 3
+                    }
+                }
+            },
+            createIndex: {
+                name: 'CREATE_INDEX',
+                keywords: ['CREATE', 'INDEX']
             }
         }
     }
@@ -47,22 +61,12 @@ var mysqlToObjParser = (function() {
             var sDefinitions = oMatchRes[4];
             var sCreateDefinition = '';
             if (sDefinitions.indexOf('(') !== -1) {
-                sCreateDefinition = _getStringEdgedByBrackets(oMatchRes[4], '(', ')');
-                sDefinitions = sDefinitions.substring(0, sCreateDefinition.length + 1);
+                sCreateDefinition = _getStringEdgedByBrackets(sDefinitions, '(', ')');
+                sDefinitions = sDefinitions.substring(sCreateDefinition.length + 1);
             }
-            var sPartitionOptions = '';
-            if (/PARTITION BY/i.test(sDefinitions)) {
-                var iPartInd = sDefinitions.indexOf('PARTITION BY');
-                if (iPartInd === -1) {
-                    iPartInd = sDefinitions.indexOf('partition by');
-                }
-                sPartitionOptions = sDefinitions.substring(iPartInd);
-                sDefinitions = sDefinitions.substring(0, iPartInd);
-            }
-            var sTableOptions = sDefinitions;
+            var aColumns = [];
+            var aIndexes = [];
             if (sCreateDefinition) {
-                var aColumns = [];
-                var aIndexes = [];
                 var aCreateDef = _getSplittedStringWithoutBreakingBrackets(sCreateDefinition, ',', '(', ')'),
                     sCreateDef = '';
 
@@ -133,7 +137,21 @@ var mysqlToObjParser = (function() {
                         });
                     }
                 }
+            }
 
+            if (sDefinitions) {
+                var oTableOptions = {};
+                var aOptions = _oConfig.commands.createTable.tableOptions;
+                for (var sOptName in aOptions) {
+                    if (!aOptions.hasOwnProperty(sOptName)) {
+                        continue;
+                    }
+
+                    var oMatchOpt = sDefinitions.match(aOptions[sOptName].regex);
+                    if (oMatchOpt && typeof oMatchOpt[aOptions[sOptName].valIndex] !== 'undefined') {
+                        oTableOptions[sOptName] = oMatchOpt[aOptions[sOptName].valIndex];
+                    }
+                }
             }
             
             if (aColumns.length) {
@@ -141,6 +159,48 @@ var mysqlToObjParser = (function() {
             }
             if (aIndexes.length) {
                 oCommand.indexes = aIndexes;
+            }
+            if (Object.keys(oTableOptions).length) {
+                oCommand.tableOptions = oTableOptions;
+            }
+        }
+
+        return oCommand;
+    };
+
+    var _parseCreateIndexCommand = function(sSQLCommand) {
+        var oCommand = {
+            name: _oConfig.commands.createIndex.name
+        };
+
+        var regex = /CREATE(\s+(UNIQUE|FULLTEXT|SPATIAL))?\s+INDEX\s+(\w+)(\s+USING\s+(BTREE|HASH))?\s+ON\s+(\w+)(.*)/im;
+        var oMatchRes = sSQLCommand.match(regex);
+        if (oMatchRes[2]) {
+            oCommand.createType = oMatchRes[2];
+        }
+        if (oMatchRes[3]) {
+            oCommand.indexName = oMatchRes[3];
+        }
+        if (oMatchRes[5]) {
+            oCommand.indexType = oMatchRes[5];
+        } else {
+            oCommand.indexType = 'BTREE';
+        }
+        if (oMatchRes[6]) {
+            oCommand.tableName = oMatchRes[6];
+        }
+        if (oMatchRes[7]) {
+            var sDef = oMatchRes[7].trim();
+            var sColumns = _getStringEdgedByBrackets(sDef, '(', ')');
+            var sOptions = sDef.substring(sColumns.length + 2);
+            sColumns = sColumns.replace(/\s/img, '');
+            sOptions = sOptions.trim();
+
+            if (sColumns) {
+                oCommand.columnName = sColumns;
+            }
+            if (sOptions) {
+                oCommand.options = sOptions;
             }
         }
 
@@ -167,10 +227,11 @@ var mysqlToObjParser = (function() {
                     case 'createTable':
                         oCommand = _parseCreateTableCommand(sSQLCommand);
                         break;
+                    case 'createIndex':
+                        oCommand = _parseCreateIndexCommand(sSQLCommand);
+                        break;
                 }
             }
-
-            return oCommand;
         }
 
         return oCommand;
@@ -238,6 +299,9 @@ var mysqlToObjParser = (function() {
             sSQLCommand = aSQLCommands[ind].trim();
             if (sSQLCommand) {
                 oCommand = _parseCommand(_getFormattedCommand(sSQLCommand));
+                if (!oCommand) {
+                    continue;
+                }
                 switch (oCommand.name) {
                     case _oConfig.commands.createTable.name:
                         var tempObj = {};
@@ -247,11 +311,44 @@ var mysqlToObjParser = (function() {
                         if (oCommand.indexes) {
                             tempObj.indexes = oCommand.indexes;
                         }
+                        if (oCommand.tableOptions) {
+                            tempObj.tableOptions = oCommand.tableOptions;
+                        }
                         if (typeof oSQLObj[oCommand.tableName] === 'undefined') {
                             oSQLObj[oCommand.tableName] = tempObj;
                         } else {
                             oSQLObj[oCommand.tableName] = Object.assign(oSQLObj[oCommand.tableName], tempObj);
                         }
+                        break;
+                    case _oConfig.commands.createIndex.name:
+                        var tempObj = {};
+                        if (oCommand.createType) {
+                            tempObj.create_type = oCommand.createType;
+                            tempObj.non_unique = tempObj.create_type === 'UNIQUE' ? 0 : 1;
+                        } else {
+                            tempObj.non_unique = 1;
+                        }
+                        if (oCommand.indexName) {
+                            tempObj.index_name = oCommand.indexName;
+                        }
+                        if (oCommand.indexType) {
+                            tempObj.index_type = oCommand.indexType;
+                        }
+                        if (oCommand.columnName) {
+                            tempObj.column_name = oCommand.columnName;
+                        }
+                        if (oCommand.options) {
+                            tempObj.options = oCommand.options;
+                        }
+                        if (typeof oSQLObj[oCommand.tableName] === 'undefined') {
+                            oSQLObj[oCommand.tableName] = {
+                                indexes: []
+                            };
+                        }
+                        if (typeof oSQLObj[oCommand.tableName].indexes === 'undefined') {
+                            oSQLObj[oCommand.tableName].indexes = [];
+                        }
+                        oSQLObj[oCommand.tableName].indexes.push(tempObj);
                         break;
                 }
             }

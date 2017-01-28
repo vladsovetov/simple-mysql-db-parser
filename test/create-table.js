@@ -459,4 +459,69 @@ describe('parse CREATE TABLE', function() {
         };
         assert.deepEqual(mysqlToObjParser.parse(sSQL), expectedObj);
     });
+    it('converts creating with specified table engine', function() {
+        var sSQL = `CREATE TABLE new_complicated_table (
+                      id bigint(50) NOT NULL,
+                      user_id varchar(255) binary NOT NULL,
+                      PRIMARY KEY (id))ENGINE = InnoDB;`;
+        var expectedObj = {
+            "new_complicated_table": {
+                columns: [{
+                    "field": "id",
+                    "type": "bigint(50)",
+                    "null": false,
+                    "default": ""
+                },{
+                    "field": "user_id",
+                    "type": "varchar(255)",
+                    "null": false,
+                    "default": ""
+                }],
+                indexes: [{
+                    "non_unique": 0,
+                    "key_name": "PRIMARY",
+                    "key_type": "PRIMARY",
+                    "column_name": "id",
+                    "index_type": "BTREE"
+                }],
+                "tableOptions": {
+                  "engine": "InnoDB"
+                }
+            }
+        };
+        assert.deepEqual(mysqlToObjParser.parse(sSQL), expectedObj);
+    });
+    it('converts creating with specified table engine and character set', function() {
+        var sSQL = `CREATE TABLE new_complicated_table (
+                      id bigint(50) NOT NULL,
+                      user_id varchar(255) binary NOT NULL,
+                      PRIMARY KEY (id))ENGINE = InnoDB CHARACTER SET utf8;;`;
+        var expectedObj = {
+            "new_complicated_table": {
+                columns: [{
+                    "field": "id",
+                    "type": "bigint(50)",
+                    "null": false,
+                    "default": ""
+                },{
+                    "field": "user_id",
+                    "type": "varchar(255)",
+                    "null": false,
+                    "default": ""
+                }],
+                indexes: [{
+                    "non_unique": 0,
+                    "key_name": "PRIMARY",
+                    "key_type": "PRIMARY",
+                    "column_name": "id",
+                    "index_type": "BTREE"
+                }],
+                "tableOptions": {
+                  "characterSet": "utf8",
+                  "engine": "InnoDB"
+                }
+            }
+        };
+        assert.deepEqual(mysqlToObjParser.parse(sSQL), expectedObj);
+    });
 });
