@@ -43,6 +43,14 @@ var mysqlToObjParser = (function() {
             createIndex: {
                 name: 'CREATE_INDEX',
                 keywords: ['CREATE', 'INDEX']
+            },
+            createFunction: {
+                name: 'CREATE_FUNCTION',
+                keywords: ['CREATE', 'FUNCTION'],
+                characteristic: {
+                    regex: /(LANGUAGE\s+SQL|DETERMINISTIC|NOT\s+DETERMINISTIC|CONTAINS\s+SQL|NO\s+SQL|READS\s+SQL\s+DATA|MODIFIES\s+SQL\s+DATA|SQL\s+SECURITY\s+DEFINER|SQL\s+SECURITY\s+INVOKER)/im,
+                    valIndex: 1
+                }
             }
         }
     }
@@ -207,6 +215,43 @@ var mysqlToObjParser = (function() {
         return oCommand;
     };
 
+    var _parseCreateFunctionCommand = function(sSQLCommand) {
+        var oCommand = {
+            name: _oConfig.commands.createFunction.name,
+            body: {}
+        };
+
+        var regex = /CREATE(\s+DEFINER\s*=\s*(CURRENT_USER|\w+))?\s+FUNCTION\s+(\w+)\s+\(([^)]+)\)\s+RETURNS\s+([^\s]+)(.*)/im;
+        var oMatchRes = sSQLCommand.match(regex);
+        if (oMatchRes[2]) {
+            oCommand.body.definer = oMatchRes[2];
+        }
+        if (oMatchRes[3]) {
+            oCommand.body.name = oMatchRes[3];
+        }
+        if (oMatchRes[4]) {
+            oCommand.body.parameters = oMatchRes[4].split(/\s*,\s*/g);
+        }
+        if (oMatchRes[5]) {
+            oCommand.body.returnType = oMatchRes[5];
+        }
+        if (oMatchRes[6]) {
+            var sDef = oMatchRes[6].trim();
+            var charactRegex = _oConfig.commands.createFunction.characteristic.regex;
+            var oMatch = sDef.match(charactRegex);
+            if (oMatch[1]) {
+                oCommand.body.characteristic = oMatch[1];
+                sDef = sDef.substring(oMatch[1].length);
+            }
+
+            if (sDef) {
+                oCommand.body.routineBody = sDef.trim();
+            }
+        }
+
+        return oCommand;
+    };
+
     var _parseCommand = function(sSQLCommand) {
         var oCommand = null;
         for (var sCommandName in _oConfig.commands) {
@@ -229,6 +274,9 @@ var mysqlToObjParser = (function() {
                         break;
                     case 'createIndex':
                         oCommand = _parseCreateIndexCommand(sSQLCommand);
+                        break;
+                    case 'createFunction':
+                        oCommand = _parseCreateFunctionCommand(sSQLCommand);
                         break;
                 }
             }
@@ -287,7 +335,7 @@ var mysqlToObjParser = (function() {
     };
 
     var _getFormattedCommand = function(sCommand) {
-        return sCommand.trim().replace(/\n/img, '').replace(/\s{2,}/img, ' ');
+        return sCommand.trim().replace(/\n/img, ' ').replace(/\s{2,}/img, ' ');
     };
 
     var parse = function(sSQL) {
@@ -349,6 +397,12 @@ var mysqlToObjParser = (function() {
                             oSQLObj[oCommand.tableName].indexes = [];
                         }
                         oSQLObj[oCommand.tableName].indexes.push(tempObj);
+                        break;
+                    case _oConfig.commands.createFunction.name:
+                        if (typeof oSQLObj.functions === 'undefined') {
+                            oSQLObj.functions = [];
+                        }
+                        oSQLObj.functions.push(oCommand.body);
                         break;
                 }
             }
